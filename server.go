@@ -161,16 +161,15 @@ func optsWithDefaults(opts *Options) *Options {
 // via an instance of Options. Calling this function in your code will
 // probably look something like this:
 //
-//     driver := &MyDriver{}
-//     opts    := &server.Options{
-//       Driver: driver,
-//       Auth: auth,
-//       Port: 2000,
-//       Perm: perm,
-//       Hostname: "127.0.0.1",
-//     }
-//     server, err  := server.NewServer(opts)
-//
+//	driver := &MyDriver{}
+//	opts    := &server.Options{
+//	  Driver: driver,
+//	  Auth: auth,
+//	  Port: 2000,
+//	  Perm: perm,
+//	  Hostname: "127.0.0.1",
+//	}
+//	server, err  := server.NewServer(opts)
 func NewServer(opts *Options) (*Server, error) {
 	opts = optsWithDefaults(opts)
 	if opts.Perm == nil {
@@ -250,7 +249,6 @@ func simpleTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 // If the server fails to start for any reason, an error will be returned. Common
 // errors are trying to bind to a privileged port or something else is already
 // listening on the same port.
-//
 func (server *Server) ListenAndServe() error {
 	var listener net.Listener
 	var err error
@@ -280,7 +278,6 @@ func (server *Server) ListenAndServe() error {
 
 // Serve accepts connections on a given net.Listener and handles each
 // request in a new goroutine.
-//
 func (server *Server) Serve(l net.Listener) error {
 	server.listener = l
 	server.ctx, server.cancel = context.WithCancel(context.Background())
