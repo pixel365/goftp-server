@@ -5,6 +5,7 @@
 package minio
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,13 +14,12 @@ import (
 	"strings"
 	"time"
 
-	minio "github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"goftp.io/server/v2"
 )
 
-var (
-	_ server.Driver = &Driver{}
-)
+var _ server.Driver = &Driver{}
 
 // Driver implements Driver to store files in minio
 type Driver struct {
@@ -30,14 +30,20 @@ type Driver struct {
 // NewDriver implements DriverFactory
 func NewDriver(endpoint, accessKeyID, secretAccessKey, location, bucket string, useSSL bool) (server.Driver, error) {
 	// Initialize minio client object.
-	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, useSSL)
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: useSSL,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	if err = minioClient.MakeBucket(bucket, location); err != nil {
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	if err = minioClient.MakeBucket(ctx, bucket, minio.MakeBucketOptions{Region: location}); err != nil {
 		// Check to see if we already own this bucket (which happens if you run this twice)
-		exists, errBucketExists := minioClient.BucketExists(bucket)
+		exists, errBucketExists := minioClient.BucketExists(ctx, bucket)
 		if !exists || errBucketExists != nil {
 			return nil, err
 		}
@@ -91,21 +97,23 @@ func (m *minioFileInfo) Sys() interface{} {
 	return nil
 }
 
-func (driver *Driver) isDir(path string) (bool, error) {
+func (driver *Driver) isDir(ctx context.Context, path string) (bool, error) {
 	p := buildMinioDir(path)
 
-	info, err := driver.client.StatObject(driver.bucket, p, minio.StatObjectOptions{})
+	info, err := driver.client.StatObject(ctx, driver.bucket, p, minio.StatObjectOptions{})
 	if err != nil {
-		doneCh := make(chan struct{})
-		objectCh := driver.client.ListObjects(driver.bucket, p, false, doneCh)
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		objectCh := driver.client.ListObjects(ctx, driver.bucket, minio.ListObjectsOptions{
+			Prefix:    p,
+			Recursive: false,
+		})
 		for object := range objectCh {
 			if strings.HasPrefix(object.Key, p) {
-				close(doneCh)
 				return true, nil
 			}
 		}
 
-		close(doneCh)
 		return false, nil
 	}
 
@@ -122,9 +130,9 @@ func (driver *Driver) Stat(ctx *server.Context, path string) (os.FileInfo, error
 	}
 
 	p := buildMinioPath(path)
-	objInfo, err := driver.client.StatObject(driver.bucket, p, minio.StatObjectOptions{})
+	objInfo, err := driver.client.StatObject(ctx, driver.bucket, p, minio.StatObjectOptions{})
 	if err != nil {
-		if isDir, err := driver.isDir(p); err != nil {
+		if isDir, err := driver.isDir(ctx, p); err != nil {
 			return nil, err
 		} else if isDir {
 			return &minioFileInfo{
@@ -144,14 +152,14 @@ func (driver *Driver) Stat(ctx *server.Context, path string) (os.FileInfo, error
 
 // ListDir implements Driver
 func (driver *Driver) ListDir(ctx *server.Context, path string, callback func(os.FileInfo) error) error {
-	doneCh := make(chan struct{})
-	defer close(doneCh)
-
 	p := buildMinioDir(path)
 	if p == "/" {
 		p = ""
 	}
-	objectCh := driver.client.ListObjects(driver.bucket, p, false, doneCh)
+	objectCh := driver.client.ListObjects(ctx, driver.bucket, minio.ListObjectsOptions{
+		Prefix:    p,
+		Recursive: false,
+	})
 	for object := range objectCh {
 		if object.Err != nil {
 			return object.Err
@@ -179,17 +187,17 @@ func (driver *Driver) ListDir(ctx *server.Context, path string, callback func(os
 
 // DeleteDir implements Driver
 func (driver *Driver) DeleteDir(ctx *server.Context, path string) error {
-	doneCh := make(chan struct{})
-	defer close(doneCh)
-
 	p := buildMinioPath(path)
-	objectCh := driver.client.ListObjects(driver.bucket, p, true, doneCh)
+	objectCh := driver.client.ListObjects(ctx, driver.bucket, minio.ListObjectsOptions{
+		Prefix:    p,
+		Recursive: true,
+	})
 	for object := range objectCh {
 		if object.Err != nil {
 			return object.Err
 		}
 
-		if err := driver.client.RemoveObject(driver.bucket, object.Key); err != nil {
+		if err := driver.client.RemoveObject(ctx, driver.bucket, object.Key, minio.RemoveObjectOptions{}); err != nil {
 			return err
 		}
 	}
@@ -198,35 +206,32 @@ func (driver *Driver) DeleteDir(ctx *server.Context, path string) error {
 
 // DeleteFile implements Driver
 func (driver *Driver) DeleteFile(ctx *server.Context, path string) error {
-	return driver.client.RemoveObject(driver.bucket, buildMinioPath(path))
+	return driver.client.RemoveObject(ctx, driver.bucket, buildMinioPath(path), minio.RemoveObjectOptions{})
 }
 
 // Rename implements Driver
 func (driver *Driver) Rename(ctx *server.Context, fromPath string, toPath string) error {
-	src := minio.NewSourceInfo(driver.bucket, buildMinioPath(fromPath), nil)
-	dst, err := minio.NewDestinationInfo(driver.bucket, buildMinioPath(toPath), nil, nil)
-	if err != nil {
+	src := minio.CopySrcOptions{Bucket: driver.bucket, Object: buildMinioPath(fromPath)}
+	dst := minio.CopyDestOptions{Bucket: driver.bucket, Object: buildMinioPath(toPath)}
+
+	if _, err := driver.client.CopyObject(ctx, dst, src); err != nil {
 		return err
 	}
 
-	if err := driver.client.CopyObject(dst, src); err != nil {
-		return err
-	}
-
-	return driver.client.RemoveObject(driver.bucket, buildMinioPath(fromPath))
+	return driver.client.RemoveObject(ctx, driver.bucket, buildMinioPath(fromPath), minio.RemoveObjectOptions{})
 }
 
 // MakeDir implements Driver
 func (driver *Driver) MakeDir(ctx *server.Context, path string) error {
 	dirPath := buildMinioDir(path)
-	_, err := driver.client.PutObject(driver.bucket, dirPath, nil, 0, minio.PutObjectOptions{})
+	_, err := driver.client.PutObject(ctx, driver.bucket, dirPath, nil, 0, minio.PutObjectOptions{})
 	return err
 }
 
 // GetFile implements Driver
 func (driver *Driver) GetFile(ctx *server.Context, path string, offset int64) (int64, io.ReadCloser, error) {
-	var opts = minio.GetObjectOptions{}
-	object, err := driver.client.GetObject(driver.bucket, buildMinioPath(path), opts)
+	opts := minio.GetObjectOptions{}
+	object, err := driver.client.GetObject(ctx, driver.bucket, buildMinioPath(path), opts)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -252,7 +257,11 @@ func (driver *Driver) GetFile(ctx *server.Context, path string, offset int64) (i
 func (driver *Driver) PutFile(ctx *server.Context, destPath string, data io.Reader, offset int64) (int64, error) {
 	p := buildMinioPath(destPath)
 	if offset == -1 {
-		return driver.client.PutObject(driver.bucket, p, data, -1, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+		uploadInfo, err := driver.client.PutObject(ctx, driver.bucket, p, data, -1, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+		if err != nil {
+			return 0, err
+		}
+		return uploadInfo.Size, nil
 	}
 
 	tempFile := p + ".tmp"
@@ -262,7 +271,7 @@ func (driver *Driver) PutFile(ctx *server.Context, destPath string, data io.Read
 		}
 	}()
 
-	info, err := driver.client.StatObject(driver.bucket, p, minio.StatObjectOptions{})
+	info, err := driver.client.StatObject(ctx, driver.bucket, p, minio.StatObjectOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -270,19 +279,20 @@ func (driver *Driver) PutFile(ctx *server.Context, destPath string, data io.Read
 		return 0, fmt.Errorf("It's unsupported that offset %d is not equal to %d", offset, info.Size)
 	}
 
-	size, err := driver.client.PutObject(driver.bucket, tempFile, data, -1, minio.PutObjectOptions{ContentType: "application/octet-stream"})
-	if err != nil {
-		return size, err
-	}
-
-	var srcs = []minio.SourceInfo{
-		minio.NewSourceInfo(driver.bucket, tempFile, nil),
-		minio.NewSourceInfo(driver.bucket, p, nil),
-	}
-	dst, err := minio.NewDestinationInfo(driver.bucket, p, nil, nil)
+	uploadInfo, err := driver.client.PutObject(ctx, driver.bucket, tempFile, data, -1, minio.PutObjectOptions{ContentType: "application/octet-stream"})
 	if err != nil {
 		return 0, err
 	}
 
-	return size, driver.client.ComposeObject(dst, srcs)
+	srcs := []minio.CopySrcOptions{
+		{Bucket: driver.bucket, Object: tempFile},
+		{Bucket: driver.bucket, Object: p},
+	}
+	dst := minio.CopyDestOptions{Bucket: driver.bucket, Object: p}
+
+	uploadInfo, err = driver.client.ComposeObject(ctx, dst, srcs...)
+	if err != nil {
+		return 0, err
+	}
+	return uploadInfo.Size, nil
 }

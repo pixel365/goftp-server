@@ -6,6 +6,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"log"
@@ -129,15 +130,16 @@ func (cmd commandAppe) Execute(sess *Session, param string) {
 		sess.lastFilePos = -1
 	}()
 
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "APPE",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	sess.server.notifiers.BeforePutFile(&ctx, targetPath)
-	size, err := sess.server.Driver.PutFile(&ctx, targetPath, sess.dataConn, sess.lastFilePos)
-	sess.server.notifiers.AfterFilePut(&ctx, targetPath, size, err)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"APPE",
+		param,
+		map[string]interface{}{},
+	)
+	sess.server.notifiers.BeforePutFile(ctx, targetPath)
+	size, err := sess.server.Driver.PutFile(ctx, targetPath, sess.dataConn, sess.lastFilePos)
+	sess.server.notifiers.AfterFilePut(ctx, targetPath, size, err)
 	if err == nil {
 		msg := fmt.Sprintf("OK, received %d bytes", size)
 		sess.writeMessage(226, msg)
@@ -255,13 +257,14 @@ func (cmd commandCwd) RequireAuth() bool {
 
 func (cmd commandCwd) Execute(sess *Session, param string) {
 	path := sess.buildPath(param)
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "CWD",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	info, err := sess.server.Driver.Stat(&ctx, path)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"CWD",
+		param,
+		map[string]interface{}{},
+	)
+	info, err := sess.server.Driver.Stat(ctx, path)
 	if err != nil {
 		sess.logf("%v", err)
 		sess.writeMessage(550, fmt.Sprint("Directory change to ", path, " failed."))
@@ -272,9 +275,9 @@ func (cmd commandCwd) Execute(sess *Session, param string) {
 		return
 	}
 
-	sess.server.notifiers.BeforeChangeCurDir(&ctx, sess.curDir, path)
+	sess.server.notifiers.BeforeChangeCurDir(ctx, sess.curDir, path)
 	err = sess.changeCurDir(path)
-	sess.server.notifiers.AfterCurDirChanged(&ctx, sess.curDir, path, err)
+	sess.server.notifiers.AfterCurDirChanged(ctx, sess.curDir, path, err)
 	if err == nil {
 		sess.writeMessage(250, "Directory changed to "+path)
 	} else {
@@ -301,15 +304,16 @@ func (cmd commandDele) RequireAuth() bool {
 
 func (cmd commandDele) Execute(sess *Session, param string) {
 	path := sess.buildPath(param)
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "DELE",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	sess.server.notifiers.BeforeDeleteFile(&ctx, path)
-	err := sess.server.Driver.DeleteFile(&ctx, path)
-	sess.server.notifiers.AfterFileDeleted(&ctx, path, err)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"DELE",
+		param,
+		map[string]interface{}{},
+	)
+	sess.server.notifiers.BeforeDeleteFile(ctx, path)
+	err := sess.server.Driver.DeleteFile(ctx, path)
+	sess.server.notifiers.AfterFileDeleted(ctx, path, err)
 	if err == nil {
 		sess.writeMessage(250, "File deleted")
 	} else {
@@ -508,12 +512,13 @@ func convertFileInfo(sess *Session, f os.FileInfo, p string) (FileInfo, error) {
 }
 
 func list(sess *Session, cmd, p, param string) ([]FileInfo, error) {
-	ctx := &Context{
-		Sess:  sess,
-		Cmd:   cmd,
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
+	ctx := newContext(
+		context.Background(),
+		sess,
+		cmd,
+		param,
+		map[string]interface{}{},
+	)
 	info, err := sess.server.Driver.Stat(ctx, p)
 	if err != nil {
 		return nil, err
@@ -594,12 +599,13 @@ func (cmd commandNlst) RequireAuth() bool {
 }
 
 func (cmd commandNlst) Execute(sess *Session, param string) {
-	ctx := &Context{
-		Sess:  sess,
-		Cmd:   "NLST",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"NLST",
+		param,
+		map[string]interface{}{},
+	)
 	path := sess.buildPath(parseListParam(param))
 	info, err := sess.server.Driver.Stat(ctx, path)
 	if err != nil {
@@ -662,12 +668,13 @@ func (cmd commandMdtm) RequireAuth() bool {
 
 func (cmd commandMdtm) Execute(sess *Session, param string) {
 	path := sess.buildPath(param)
-	stat, err := sess.server.Driver.Stat(&Context{
-		Sess:  sess,
-		Cmd:   "MDTM",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}, path)
+	stat, err := sess.server.Driver.Stat(newContext(
+		context.Background(),
+		sess,
+		"MDTM",
+		param,
+		map[string]interface{}{},
+	), path)
 	if err == nil {
 		sess.writeMessage(213, stat.ModTime().Format("20060102150405"))
 	} else {
@@ -693,15 +700,16 @@ func (cmd commandMkd) RequireAuth() bool {
 
 func (cmd commandMkd) Execute(sess *Session, param string) {
 	path := sess.buildPath(param)
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "MKD",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	sess.server.notifiers.BeforeCreateDir(&ctx, path)
-	err := sess.server.Driver.MakeDir(&ctx, path)
-	sess.server.notifiers.AfterDirCreated(&ctx, path, err)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"MKD",
+		param,
+		map[string]interface{}{},
+	)
+	sess.server.notifiers.BeforeCreateDir(ctx, path)
+	err := sess.server.Driver.MakeDir(ctx, path)
+	sess.server.notifiers.AfterDirCreated(ctx, path, err)
 	if err == nil {
 		sess.writeMessage(257, "Directory created")
 	} else {
@@ -781,14 +789,15 @@ func (cmd commandPass) Execute(sess *Session, param string) {
 	if driverAuth, found := sess.server.Driver.(Auth); found {
 		auth = driverAuth
 	}
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "PASS",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	ok, err := auth.CheckPasswd(&ctx, sess.reqUser, param)
-	sess.server.notifiers.AfterUserLogin(&ctx, sess.reqUser, param, ok, err)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"PASS",
+		param,
+		map[string]interface{}{},
+	)
+	ok, err := auth.CheckPasswd(ctx, sess.reqUser, param)
+	sess.server.notifiers.AfterUserLogin(ctx, sess.reqUser, param, ok, err)
 	if err != nil {
 		sess.writeMessage(550, "Checking password error")
 		return
@@ -944,28 +953,29 @@ func (cmd commandRetr) Execute(sess *Session, param string) {
 	defer func() {
 		sess.lastFilePos = -1
 	}()
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "RETR",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	sess.server.notifiers.BeforeDownloadFile(&ctx, path)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"RETR",
+		param,
+		map[string]interface{}{},
+	)
+	sess.server.notifiers.BeforeDownloadFile(ctx, path)
 	readPos := sess.lastFilePos
 	if readPos < 0 {
 		readPos = 0
 	}
-	size, data, err := sess.server.Driver.GetFile(&ctx, path, readPos)
+	size, data, err := sess.server.Driver.GetFile(ctx, path, readPos)
 	if err == nil {
 		defer data.Close()
 		sess.writeMessage(150, fmt.Sprintf("Data transfer starting %d bytes", size))
 		err = sess.sendOutofBandDataWriter(data)
-		sess.server.notifiers.AfterFileDownloaded(&ctx, path, size, err)
+		sess.server.notifiers.AfterFileDownloaded(ctx, path, size, err)
 		if err != nil {
 			sess.writeMessage(551, "Error reading file")
 		}
 	} else {
-		sess.server.notifiers.AfterFileDownloaded(&ctx, path, size, err)
+		sess.server.notifiers.AfterFileDownloaded(ctx, path, size, err)
 		sess.writeMessage(551, "File not available")
 	}
 }
@@ -1014,12 +1024,13 @@ func (cmd commandRnfr) RequireAuth() bool {
 func (cmd commandRnfr) Execute(sess *Session, param string) {
 	sess.renameFrom = ""
 	p := sess.buildPath(param)
-	if _, err := sess.server.Driver.Stat(&Context{
-		Sess:  sess,
-		Cmd:   "RNFR",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}, p); err != nil {
+	if _, err := sess.server.Driver.Stat(newContext(
+		context.Background(),
+		sess,
+		"RNFR",
+		param,
+		map[string]interface{}{},
+	), p); err != nil {
 		sess.writeMessage(550, fmt.Sprint("Action not taken: ", err))
 		return
 	}
@@ -1045,12 +1056,13 @@ func (cmd commandRnto) RequireAuth() bool {
 
 func (cmd commandRnto) Execute(sess *Session, param string) {
 	toPath := sess.buildPath(param)
-	err := sess.server.Driver.Rename(&Context{
-		Sess:  sess,
-		Cmd:   "RNTO",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}, sess.renameFrom, toPath)
+	err := sess.server.Driver.Rename(newContext(
+		context.Background(),
+		sess,
+		"RNTO",
+		param,
+		map[string]interface{}{},
+	), sess.renameFrom, toPath)
 	defer func() {
 		sess.renameFrom = ""
 	}()
@@ -1104,12 +1116,13 @@ func (cmd commandXRmd) Execute(sess *Session, param string) {
 
 func executeRmd(cmd string, sess *Session, param string) {
 	p := sess.buildPath(param)
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   cmd,
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
+	ctx := newContext(
+		context.Background(),
+		sess,
+		cmd,
+		param,
+		map[string]interface{}{},
+	)
 	if param == "/" || param == "" {
 		sess.writeMessage(550, "Directory / cannot be deleted")
 		return
@@ -1117,12 +1130,12 @@ func executeRmd(cmd string, sess *Session, param string) {
 
 	needChangeCurDir := strings.HasPrefix(param, sess.curDir)
 
-	sess.server.notifiers.BeforeDeleteDir(&ctx, p)
-	err := sess.server.Driver.DeleteDir(&ctx, p)
+	sess.server.notifiers.BeforeDeleteDir(ctx, p)
+	err := sess.server.Driver.DeleteDir(ctx, p)
 	if needChangeCurDir {
 		sess.curDir = path.Dir(param)
 	}
-	sess.server.notifiers.AfterDirDeleted(&ctx, p, err)
+	sess.server.notifiers.AfterDirDeleted(ctx, p, err)
 	if err == nil {
 		sess.writeMessage(250, "Directory deleted")
 	} else {
@@ -1364,12 +1377,13 @@ func (cmd commandSize) RequireAuth() bool {
 
 func (cmd commandSize) Execute(sess *Session, param string) {
 	path := sess.buildPath(param)
-	stat, err := sess.server.Driver.Stat(&Context{
-		Sess:  sess,
-		Cmd:   "SIZE",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}, path)
+	stat, err := sess.server.Driver.Stat(newContext(
+		context.Background(),
+		sess,
+		"SIZE",
+		param,
+		map[string]interface{}{},
+	), path)
 	if err != nil {
 		log.Printf("Size: error(%s)", err)
 		sess.writeMessage(450, fmt.Sprintf("path %s not found", param))
@@ -1407,23 +1421,24 @@ func (cmd commandStat) Execute(sess *Session, param string) {
 		return
 	}
 
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "STAT",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"STAT",
+		param,
+		map[string]interface{}{},
+	)
 
 	// file or directory stat
 	path := sess.buildPath(param)
-	stat, err := sess.server.Driver.Stat(&ctx, path)
+	stat, err := sess.server.Driver.Stat(ctx, path)
 	if err != nil {
 		log.Printf("Size: error(%s)", err)
 		sess.writeMessage(450, fmt.Sprintf("path %s not found", path))
 	} else {
 		var files []FileInfo
 		if stat.IsDir() {
-			err = sess.server.Driver.ListDir(&ctx, path, func(f os.FileInfo) error {
+			err = sess.server.Driver.ListDir(ctx, path, func(f os.FileInfo) error {
 				info, err := convertFileInfo(sess, f, filepath.Join(path, f.Name()))
 				if err != nil {
 					return err
@@ -1477,15 +1492,16 @@ func (cmd commandStor) Execute(sess *Session, param string) {
 		sess.lastFilePos = -1
 	}()
 
-	ctx := Context{
-		Sess:  sess,
-		Cmd:   "STOR",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}
-	sess.server.notifiers.BeforePutFile(&ctx, targetPath)
-	size, err := sess.server.Driver.PutFile(&ctx, targetPath, sess.dataConn, sess.lastFilePos)
-	sess.server.notifiers.AfterFilePut(&ctx, targetPath, size, err)
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"STOR",
+		param,
+		map[string]interface{}{},
+	)
+	sess.server.notifiers.BeforePutFile(ctx, targetPath)
+	size, err := sess.server.Driver.PutFile(ctx, targetPath, sess.dataConn, sess.lastFilePos)
+	sess.server.notifiers.AfterFilePut(ctx, targetPath, size, err)
 	if err == nil {
 		msg := fmt.Sprintf("OK, received %d bytes", size)
 		sess.writeMessage(226, msg)
@@ -1595,11 +1611,12 @@ func (cmd commandUser) RequireAuth() bool {
 
 func (cmd commandUser) Execute(sess *Session, param string) {
 	sess.reqUser = param
-	sess.server.notifiers.BeforeLoginUser(&Context{
-		Sess:  sess,
-		Cmd:   "USER",
-		Param: param,
-		Data:  make(map[string]interface{}),
-	}, sess.reqUser)
+	sess.server.notifiers.BeforeLoginUser(newContext(
+		context.Background(),
+		sess,
+		"USER",
+		param,
+		map[string]interface{}{},
+	), sess.reqUser)
 	sess.writeMessage(331, "User name ok, password required")
 }

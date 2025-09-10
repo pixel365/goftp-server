@@ -16,9 +16,7 @@ import (
 	"goftp.io/server/v2/ratelimit"
 )
 
-var (
-	version = "2.0beta"
-)
+var version = "2.0beta"
 
 // Options contains parameters for server.NewServer()
 type Options struct {
