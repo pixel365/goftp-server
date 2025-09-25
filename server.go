@@ -53,11 +53,11 @@ type Options struct {
 	// use tls, default is false
 	TLS bool
 
-	// if tls used, cert file is required
-	CertFile string
+	// if tls used and TLSConfig is nil, key/cert file is required
+	CertFile, KeyFile string
 
-	// if tls used, key file is required
-	KeyFile string
+	// if tls used and key/cert file are empty, TLSConfig is required
+	TLSConfig *tls.Config
 
 	// If ture TLS is used in RFC4217 mode
 	ExplicitFTPS bool
@@ -146,6 +146,7 @@ func optsWithDefaults(opts *Options) *Options {
 	newOpts.TLS = opts.TLS
 	newOpts.KeyFile = opts.KeyFile
 	newOpts.CertFile = opts.CertFile
+	newOpts.TLSConfig = opts.TLSConfig
 	newOpts.ExplicitFTPS = opts.ExplicitFTPS
 
 	newOpts.PublicIP = opts.PublicIP
@@ -252,9 +253,13 @@ func (server *Server) ListenAndServe() error {
 	var err error
 
 	if server.Options.TLS {
-		server.tlsConfig, err = simpleTLSConfig(server.CertFile, server.KeyFile)
-		if err != nil {
-			return err
+		if server.TLSConfig != nil {
+			server.tlsConfig = server.TLSConfig
+		} else {
+			server.tlsConfig, err = simpleTLSConfig(server.CertFile, server.KeyFile)
+			if err != nil {
+				return err
+			}
 		}
 
 		if server.Options.ExplicitFTPS {
