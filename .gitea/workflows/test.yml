@@ -28,7 +28,7 @@ jobs:
           MINIO_SERVER_BUCKET: test
     services:
       minio:
-        image: bitnami/minio:2023.8.31
+        image: bitnamilegacy/minio:2023.8.31
         env:
           MINIO_ROOT_USER: 123456
           MINIO_ROOT_PASSWORD: 12345678
