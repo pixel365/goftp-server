@@ -243,7 +243,7 @@ func (socket *passiveSocket) ListenAndServe() (err error) {
 	}
 
 	socket.port = port
-	if socket.sess.server.tlsConfig != nil {
+	if socket.sess.server.tlsConfig != nil && socket.sess.tls {
 		listener = tls.NewListener(listener, socket.sess.server.tlsConfig)
 	}
 
