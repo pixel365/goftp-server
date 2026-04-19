@@ -12,7 +12,6 @@ import (
 	"log"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -1460,57 +1459,27 @@ func (cmd commandStat) RequireAuth() bool {
 func (cmd commandStat) Execute(sess *Session, param string) {
 	// system stat
 	if param == "" {
-		sess.writeMessage(211, fmt.Sprintf("%s FTP server status:\nVersion %s"+
+		sess.writeMessageMultiline(211, fmt.Sprintf("%s FTP server status:\n"+
+			"Version %s\n"+
 			"Connected to %s (%s)\n"+
 			"Logged in %s\n"+
 			"TYPE: ASCII, FORM: Nonprint; STRUcture: File; transfer MODE: Stream\n"+
-			"No data connection", sess.PublicIP(), version, sess.PublicIP(),
+			"No data connection", sess.server.Name, version, sess.PublicIP(),
 			version, sess.LoginUser()))
-		sess.writeMessage(211, "End of status")
 		return
 	}
 
-	ctx := newContext(
-		context.Background(),
-		sess,
-		"STAT",
-		param,
-		map[string]interface{}{},
-	)
-
 	// file or directory stat
-	path := sess.buildPath(param)
-	stat, err := sess.server.Driver.Stat(ctx, path)
+	p := sess.buildPath(param)
+	files, err := list(sess, "STAT", p, param)
 	if err != nil {
-		log.Printf("Size: error(%s)", err)
-		sess.writeMessage(450, fmt.Sprintf("path %s not found", path))
-	} else {
-		var files []FileInfo
-		if stat.IsDir() {
-			err = sess.server.Driver.ListDir(ctx, path, func(f os.FileInfo) error {
-				info, err := convertFileInfo(sess, f, filepath.Join(path, f.Name()))
-				if err != nil {
-					return err
-				}
-				files = append(files, info)
-				return nil
-			})
-			if err != nil {
-				sess.writeMessage(550, err.Error())
-				return
-			}
-			sess.writeMessage(213, "Opening ASCII mode data connection for file list")
-		} else {
-			info, err := convertFileInfo(sess, stat, path)
-			if err != nil {
-				sess.writeMessage(550, err.Error())
-				return
-			}
-			files = append(files, info)
-			sess.writeMessage(212, "Opening ASCII mode data connection for file list")
-		}
-		sess.sendOutofbandData(listFormatter(files).Detailed())
+		log.Printf("Stat: error(%s)", err)
+		sess.writeMessage(450, fmt.Sprintf("path %s not found", p))
+		return
 	}
+
+	listing := string(listFormatter(files).Detailed())
+	sess.writeMessageMultiline(213, fmt.Sprintf("Status of %s:\r\n%s", p, listing))
 }
 
 // commandStor responds to the STOR FTP command. It allows the user to upload a

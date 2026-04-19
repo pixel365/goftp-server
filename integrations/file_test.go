@@ -7,7 +7,9 @@ package integrations
 import (
 	"io/ioutil"
 	"net"
+	"net/textproto"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +211,78 @@ func TestMLST(t *testing.T) {
 			assert.NoError(t, f.RemoveDir("/mlst_dir"))
 
 			err = f.Quit()
+			assert.NoError(t, err)
+
+			break
+		}
+	})
+}
+
+func TestSTAT(t *testing.T) {
+	err := os.MkdirAll("./testdata", os.ModePerm)
+	assert.NoError(t, err)
+
+	filePath := filepath.Join("./testdata", "stat_test.txt")
+	err = os.WriteFile(filePath, []byte("stat"), 0600)
+	assert.NoError(t, err)
+
+	var perm = server.NewSimplePerm("test", "test")
+	driver, err := file.NewDriver("./testdata")
+	assert.NoError(t, err)
+
+	opt := &server.Options{
+		Name:   "test ftpd",
+		Driver: driver,
+		Perm:   perm,
+		Port:   2126,
+		Auth: &server.SimpleAuth{
+			Name:     "admin",
+			Password: "admin",
+		},
+		Logger: new(server.DiscardLogger),
+	}
+
+	runServer(t, opt, nil, func() {
+		// Give server 0.5 seconds to get to the listening state
+		timeout := time.NewTimer(time.Millisecond * 500)
+
+		for {
+			conn, err := net.Dial("tcp", "localhost:2126")
+			if err != nil && len(timeout.C) == 0 { // Retry errors
+				continue
+			}
+			assert.NoError(t, err)
+
+			protoConn := textproto.NewConn(conn)
+			defer protoConn.Close()
+
+			_, _, err = protoConn.ReadResponse(220)
+			assert.NoError(t, err)
+
+			send := func(expected int, format string, args ...interface{}) (string, error) {
+				_, err := protoConn.Cmd(format, args...)
+				if err != nil {
+					return "", err
+				}
+				_, msg, err := protoConn.ReadResponse(expected)
+				return msg, err
+			}
+
+			_, err = send(331, "USER admin")
+			assert.NoError(t, err)
+			_, err = send(230, "PASS admin")
+			assert.NoError(t, err)
+
+			msg, err := send(211, "STAT")
+			assert.NoError(t, err)
+			assert.Contains(t, msg, "FTP server status")
+
+			msg, err = send(213, "STAT stat_test.txt")
+			assert.NoError(t, err)
+			assert.Contains(t, msg, "Status of /stat_test.txt")
+			assert.Contains(t, msg, "stat_test.txt")
+
+			_, err = send(221, "QUIT")
 			assert.NoError(t, err)
 
 			break

@@ -243,8 +243,9 @@ func (sess *Session) writeMessage(code int, message string) {
 
 // writeMessage will send a standard FTP response back to the client.
 func (sess *Session) writeMessageMultiline(code int, message string) {
+	message, _ = strings.CutSuffix(message, "\r\n")
 	sess.server.Logger.PrintResponse(sess.id, code, message)
-	line := fmt.Sprintf("%d-%s\r\n%d END\r\n", code, message, code)
+	line := fmt.Sprintf("%d-%s\r\n%d End\r\n", code, message, code)
 	_, _ = sess.controlWriter.WriteString(line)
 	sess.controlWriter.Flush()
 }
