@@ -132,6 +132,90 @@ func TestFileDriver(t *testing.T) {
 	})
 }
 
+func TestMLST(t *testing.T) {
+	err := os.MkdirAll("./testdata", os.ModePerm)
+	assert.NoError(t, err)
+
+	var perm = server.NewSimplePerm("test", "test")
+	driver, err := file.NewDriver("./testdata")
+	assert.NoError(t, err)
+
+	opt := &server.Options{
+		Name:   "test ftpd",
+		Driver: driver,
+		Perm:   perm,
+		Port:   2124,
+		Auth: &server.SimpleAuth{
+			Name:     "admin",
+			Password: "admin",
+		},
+		Logger: new(server.DiscardLogger),
+	}
+
+	runServer(t, opt, nil, func() {
+		// Give server 0.5 seconds to get to the listening state
+		timeout := time.NewTimer(time.Millisecond * 500)
+
+		for {
+			f, err := ftp.Connect("localhost:2124")
+			if err != nil && len(timeout.C) == 0 { // Retry errors
+				continue
+			}
+			assert.NoError(t, err)
+
+			assert.NoError(t, f.Login("admin", "admin"))
+
+			// Check that MLST is supported (implies MLSD too)
+			assert.True(t, f.IsTimePreciseInList(), "MLST should be advertised in FEAT")
+
+			// Store a test file
+			var content = `hello`
+			assert.NoError(t, f.Stor("mlst_test.txt", strings.NewReader(content)))
+
+			// Test MLST on a file
+			entry, err := f.GetEntry("/mlst_test.txt")
+			assert.NoError(t, err)
+			assert.EqualValues(t, "mlst_test.txt", entry.Name)
+			assert.EqualValues(t, 5, entry.Size)
+			assert.EqualValues(t, ftp.EntryTypeFile, entry.Type)
+
+			// Test MLST on a directory
+			assert.NoError(t, f.MakeDir("/mlst_dir"))
+			entry, err = f.GetEntry("/mlst_dir")
+			assert.NoError(t, err)
+			assert.EqualValues(t, "mlst_dir", entry.Name)
+			assert.EqualValues(t, ftp.EntryTypeFolder, entry.Type)
+
+			// Test MLST on current directory (no param)
+			entry, err = f.GetEntry("")
+			assert.NoError(t, err)
+			assert.EqualValues(t, ftp.EntryTypeFolder, entry.Type)
+
+			// Test that List uses MLSD (machine-readable format)
+			entries, err := f.List("/")
+			assert.NoError(t, err)
+			found := false
+			for _, e := range entries {
+				if e.Name == "mlst_test.txt" {
+					found = true
+					assert.EqualValues(t, 5, e.Size)
+					assert.EqualValues(t, ftp.EntryTypeFile, e.Type)
+				}
+			}
+			assert.True(t, found, "mlst_test.txt should be in listing")
+
+			// Cleanup
+			assert.NoError(t, f.Delete("/mlst_test.txt"))
+			assert.NoError(t, f.RemoveDir("/mlst_dir"))
+
+			err = f.Quit()
+			assert.NoError(t, err)
+
+			break
+		}
+	})
+}
+
 func TestLogin(t *testing.T) {
 	err := os.MkdirAll("./testdata", os.ModePerm)
 	assert.NoError(t, err)

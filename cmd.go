@@ -46,6 +46,7 @@ var defaultCommands = map[string]Command{
 	"MDTM": commandMdtm{},
 	"MIC":  commandMic{},
 	"MLSD": commandMLSD{},
+	"MLST": commandMLST{},
 	"MKD":  commandMkd{},
 	"MODE": commandMode{},
 	"NOOP": commandNoop{},
@@ -1244,7 +1245,7 @@ func (cmd commandMic) Execute(sess *Session, param string) {
 type commandMLSD struct{}
 
 func (cmd commandMLSD) IsExtend() bool {
-	return true
+	return false
 }
 
 func (cmd commandMLSD) RequireParam() bool {
@@ -1255,26 +1256,34 @@ func (cmd commandMLSD) RequireAuth() bool {
 	return true
 }
 
+// mlsxFacts is the list of facts advertised in the FEAT response for MLST/MLSD.
+const mlsxFacts = "Type*;Modify*;Size*;"
+
+// formatMLSxEntry formats a single file entry in MLST/MLSD format.
+func formatMLSxEntry(file os.FileInfo) string {
+	/*Possible facts "Size" / "Modify" / "Create" /
+			  "Type" / "Unique" / "Perm" /
+			  "Lang" / "Media-Type" / "CharSet"
+			  TODO: Perm pvals        = "a" / "c" / "d" / "e" / "f" /
+	                     "l" / "m" / "p" / "r" / "w"
+	*/
+	fileType := "file"
+	if file.IsDir() {
+		fileType = "dir"
+	}
+	return fmt.Sprintf("Type=%s;Modify=%s;Size=%d; %s",
+		fileType,
+		file.ModTime().Format("20060102150405"),
+		file.Size(),
+		file.Name(),
+	)
+}
+
 func toMLSDFormat(files []FileInfo) []byte {
 	var buf bytes.Buffer
 	for _, file := range files {
-		fileType := "file"
-		if file.IsDir() {
-			fileType = "dir"
-		}
-		/*Possible facts "Size" / "Modify" / "Create" /
-				  "Type" / "Unique" / "Perm" /
-				  "Lang" / "Media-Type" / "CharSet"
-				  TODO: Perm pvals        = "a" / "c" / "d" / "e" / "f" /
-		                     "l" / "m" / "p" / "r" / "w"
-		*/
-		fmt.Fprintf(&buf,
-			"Type=%s;Modify=%s;Size=%d; %s\n",
-			fileType,
-			file.ModTime().Format("20060102150405"),
-			file.Size(),
-			file.Name(),
-		)
+		buf.WriteString(formatMLSxEntry(file))
+		buf.WriteByte('\n')
 	}
 	return buf.Bytes()
 }
@@ -1293,6 +1302,46 @@ func (cmd commandMLSD) Execute(sess *Session, param string) {
 
 	sess.writeMessage(150, "Opening ASCII mode data connection for file list")
 	sess.sendOutofbandData(toMLSDFormat(files))
+}
+
+type commandMLST struct{}
+
+func (cmd commandMLST) IsExtend() bool {
+	return true
+}
+
+func (cmd commandMLST) RequireParam() bool {
+	return false
+}
+
+func (cmd commandMLST) RequireAuth() bool {
+	return true
+}
+
+func (cmd commandMLST) Execute(sess *Session, param string) {
+	if param == "" {
+		param = sess.curDir
+	}
+	p := sess.buildPath(param)
+
+	ctx := newContext(
+		context.Background(),
+		sess,
+		"MLST",
+		param,
+		map[string]interface{}{},
+	)
+	info, err := sess.server.Driver.Stat(ctx, p)
+	if err != nil {
+		sess.writeMessage(550, err.Error())
+		return
+	}
+	if info == nil {
+		sess.writeMessage(550, "No such file or directory")
+		return
+	}
+
+	sess.writeMessageMultiline(250, fmt.Sprintf("Start\n %s", formatMLSxEntry(info)))
 }
 
 type commandPbsz struct{}

@@ -186,7 +186,12 @@ func NewServer(opts *Options) (*Server, error) {
 
 	for k, v := range s.Commands {
 		if v.IsExtend() {
-			featCmds = featCmds + " " + k + "\n"
+			if k == "MLST" {
+				// RFC 3659: advertise MLST with supported facts
+				featCmds = featCmds + " MLST " + mlsxFacts + "\n"
+			} else {
+				featCmds = featCmds + " " + k + "\n"
+			}
 		}
 	}
 
